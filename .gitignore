@@ -1,0 +1,27 @@
+# Environnement Virtuel
+venv/
+.venv/
+env/
+ENV/
+
+# Python (fichiers compilés)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django (fichiers générés)
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Variables d'environnement (SÉCURITÉ)
+.env
+
+# IDE (Optionnel)
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
