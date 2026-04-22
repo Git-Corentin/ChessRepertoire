@@ -21,6 +21,7 @@
     <nav id="main-nav">
       <button id="nav-target"   class="active">Visualiser</button>
       <button id="nav-training">S'entraîner</button>
+      <button id="nav-correct">Se corriger</button>
     </nav>
 
     <div class="header-right">
@@ -119,6 +120,54 @@
         <button id="btn-hint"      class="btn btn-gold">Indice</button>
         <button id="btn-lock"      class="btn btn-ghost">Verrouiller</button>
       </div>
+      <div id="training-secondary-actions">
+        <button id="btn-train-errors" class="btn btn-ghost" title="Tirer une position parmi tes erreurs sauvegardées">
+          🎯 Mes erreurs <span id="error-count-badge"></span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Vue Se corriger -->
+    <section id="panel-correct" class="panel-view">
+      <h3>Se corriger</h3>
+
+      <div id="correct-form">
+        <label class="form-row">
+          <span>Pseudo Chess.com</span>
+          <input type="text" id="correct-username" placeholder="MagnusCarlsen" autocomplete="off">
+        </label>
+
+        <label class="form-row">
+          <span>Mois à analyser</span>
+          <select id="correct-months">
+            <option value="1">1 mois</option>
+            <option value="2">2 mois</option>
+            <option value="3" selected>3 derniers mois</option>
+            <option value="6">6 mois</option>
+            <option value="12">12 mois</option>
+          </select>
+        </label>
+
+        <label class="toggle-row">
+          <span>Uniquement avec erreur</span>
+          <span class="toggle">
+            <input type="checkbox" id="correct-only-errors" checked>
+            <span class="toggle-track"></span>
+          </span>
+        </label>
+
+        <button id="correct-fetch-btn" class="btn btn-primary">Charger mes parties</button>
+      </div>
+
+      <div id="correct-status"></div>
+
+      <div id="correct-game-actions" class="correct-actions">
+        <button id="correct-fix-btn" class="btn btn-primary">Corriger</button>
+        <button id="correct-next-btn" class="btn btn-ghost">Erreur suivante →</button>
+        <button id="correct-back-list-btn" class="btn btn-ghost">← Retour à la liste</button>
+      </div>
+
+      <div id="correct-games-list"></div>
     </section>
   </aside>
 
@@ -129,13 +178,14 @@
 <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 
-<!-- Modules — ORDRE IMPORTANT : gamestate < sounds < board < target/tree/training < main -->
+<!-- Modules — ORDRE IMPORTANT : gamestate < sounds < board < target/tree/training < correct < main -->
 <script src="{% static 'js/gamestate.js' %}"></script>
 <script src="{% static 'js/sounds.js' %}"></script>
 <script src="{% static 'js/board.js' %}"></script>
 <script src="{% static 'js/target.js' %}"></script>
 <script src="{% static 'js/tree.js' %}"></script>
 <script src="{% static 'js/training.js' %}"></script>
+<script src="{% static 'js/correct.js' %}"></script>
 <script src="{% static 'js/main.js' %}"></script>
 </body>
 </html>

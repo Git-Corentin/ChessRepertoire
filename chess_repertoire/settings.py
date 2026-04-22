@@ -61,3 +61,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Dossier où sont stockés les fichiers JSON générés par le script de génération.
 # Modifie ce chemin selon ton environnement.
 REPERTOIRES_DIR = BASE_DIR / "repertoires_data"
+
+# ── API Chess.com (pour la vue "Se corriger") ──────────────────────────────────
+# Chess.com exige un User-Agent avec une info de contact (email), sinon 403.
+# Remplace par ton adresse email pour que Chess.com puisse te contacter en cas
+# de problème avec l'usage de leur API.
+CHESS_COM_USER_AGENT = "ChessRepertoireApp/1.0 (contact: nicodeme.corentin@gmail.com)"

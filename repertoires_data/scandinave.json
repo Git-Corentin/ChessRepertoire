@@ -1,0 +1,215 @@
+{
+  "opening_name": "Défense Scandinave",
+  "color": "black",
+  "initial_moves": [
+    "e4",
+    "d5"
+  ],
+  "elo_range": "1000-1200",
+  "frequency_threshold": 0.1,
+  "root_fen": "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+  "pending_root_moves": [],
+  "children": [
+    {
+      "move_uci": "e4d5",
+      "move_san": "exd5",
+      "fen_after": "rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2",
+      "frequency": 0.6469,
+      "cumulative_frequency": 0.6469,
+      "total_games": 307884962,
+      "white_wins": 0.4939,
+      "draws": 0.0399,
+      "black_wins": 0.4662,
+      "stockfish_eval": null,
+      "depth": 0,
+      "is_our_move": false,
+      "complete": true,
+      "children": [
+        {
+          "move_uci": "c8g4",
+          "move_san": "Bg4",
+          "fen_after": "rn1qkbnr/ppp1pppp/8/3P4/6b1/8/PPPP1PPP/RNBQKBNR w KQkq - 1 3",
+          "frequency": 0.0058,
+          "cumulative_frequency": 0.6469,
+          "total_games": 1794634,
+          "white_wins": 0.4244,
+          "draws": 0.0299,
+          "black_wins": 0.5456,
+          "stockfish_eval": 490.0,
+          "depth": 1,
+          "is_our_move": true,
+          "complete": true,
+          "children": [
+            {
+              "move_uci": "d1g4",
+              "move_san": "Qxg4",
+              "fen_after": "rn1qkbnr/ppp1pppp/8/3P4/6Q1/8/PPPP1PPP/RNB1KBNR b KQkq - 0 3",
+              "frequency": 0.3534,
+              "cumulative_frequency": 0.2286,
+              "total_games": 631833,
+              "white_wins": 0.6254,
+              "draws": 0.0365,
+              "black_wins": 0.3381,
+              "stockfish_eval": null,
+              "depth": 2,
+              "is_our_move": false,
+              "complete": true,
+              "children": [
+                {
+                  "move_uci": "d8d5",
+                  "move_san": "Qxd5",
+                  "fen_after": "rn2kbnr/ppp1pppp/8/3q4/6Q1/8/PPPP1PPP/RNB1KBNR w KQkq - 0 4",
+                  "frequency": 0.1859,
+                  "cumulative_frequency": 0.2286,
+                  "total_games": 114686,
+                  "white_wins": 0.6023,
+                  "draws": 0.0409,
+                  "black_wins": 0.3568,
+                  "stockfish_eval": 644.0,
+                  "depth": 3,
+                  "is_our_move": true,
+                  "complete": true,
+                  "children": [
+                    {
+                      "move_uci": "b1c3",
+                      "move_san": "Nc3",
+                      "fen_after": "rn2kbnr/ppp1pppp/8/3q4/6Q1/2N5/PPPP1PPP/R1B1KBNR b KQkq - 1 4",
+                      "frequency": 0.4798,
+                      "cumulative_frequency": 0.1097,
+                      "total_games": 54344,
+                      "white_wins": 0.6082,
+                      "draws": 0.0424,
+                      "black_wins": 0.3493,
+                      "stockfish_eval": null,
+                      "depth": 4,
+                      "is_our_move": false,
+                      "complete": true,
+                      "children": [
+                        {
+                          "move_uci": "d5e6",
+                          "move_san": "Qe6+",
+                          "fen_after": "rn2kbnr/ppp1pppp/4q3/8/6Q1/2N5/PPPP1PPP/R1B1KBNR w KQkq - 2 5",
+                          "frequency": 0.2651,
+                          "cumulative_frequency": 0.1097,
+                          "total_games": 17645,
+                          "white_wins": 0.5943,
+                          "draws": 0.0607,
+                          "black_wins": 0.345,
+                          "stockfish_eval": 561.0,
+                          "depth": 5,
+                          "is_our_move": true,
+                          "complete": true,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "move_uci": "b1c3",
+              "move_san": "Nc3",
+              "fen_after": "rn1qkbnr/ppp1pppp/8/3P4/6b1/2N5/PPPP1PPP/R1BQKBNR b KQkq - 2 3",
+              "frequency": 0.3338,
+              "cumulative_frequency": 0.2159,
+              "total_games": 596691,
+              "white_wins": 0.205,
+              "draws": 0.0244,
+              "black_wins": 0.7706,
+              "stockfish_eval": null,
+              "depth": 2,
+              "is_our_move": false,
+              "complete": true,
+              "children": [
+                {
+                  "move_uci": "g4d1",
+                  "move_san": "Bxd1",
+                  "fen_after": "rn1qkbnr/ppp1pppp/8/3P4/8/2N5/PPPP1PPP/R1BbKBNR w KQkq - 0 4",
+                  "frequency": 0.9821,
+                  "cumulative_frequency": 0.2159,
+                  "total_games": 616226,
+                  "white_wins": 0.2009,
+                  "draws": 0.0245,
+                  "black_wins": 0.7746,
+                  "stockfish_eval": -528.0,
+                  "depth": 3,
+                  "is_our_move": true,
+                  "complete": true,
+                  "children": [
+                    {
+                      "move_uci": "c3d1",
+                      "move_san": "Nxd1",
+                      "fen_after": "rn1qkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/R1BNKBNR b KQkq - 0 4",
+                      "frequency": 0.5081,
+                      "cumulative_frequency": 0.1097,
+                      "total_games": 252095,
+                      "white_wins": 0.2628,
+                      "draws": 0.0308,
+                      "black_wins": 0.7064,
+                      "stockfish_eval": null,
+                      "depth": 4,
+                      "is_our_move": false,
+                      "complete": true,
+                      "children": [
+                        {
+                          "move_uci": "b8a6",
+                          "move_san": "Na6",
+                          "fen_after": "r2qkbnr/ppp1pppp/n7/3P4/8/8/PPPP1PPP/R1BNKBNR w KQkq - 1 5",
+                          "frequency": 0.0149,
+                          "cumulative_frequency": 0.1097,
+                          "total_games": 3736,
+                          "white_wins": 0.3118,
+                          "draws": 0.023,
+                          "black_wins": 0.6651,
+                          "stockfish_eval": -448.0,
+                          "depth": 5,
+                          "is_our_move": true,
+                          "complete": true,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "move_uci": "e4e5",
+      "move_san": "e5",
+      "fen_after": "rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2",
+      "frequency": 0.1085,
+      "cumulative_frequency": 0.1085,
+      "total_games": 51619179,
+      "white_wins": 0.4959,
+      "draws": 0.0342,
+      "black_wins": 0.4699,
+      "stockfish_eval": null,
+      "depth": 0,
+      "is_our_move": false,
+      "complete": true,
+      "children": [
+        {
+          "move_uci": "c8g4",
+          "move_san": "Bg4",
+          "fen_after": "rn1qkbnr/ppp1pppp/8/3pP3/6b1/8/PPPP1PPP/RNBQKBNR w KQkq - 1 3",
+          "frequency": 0.005,
+          "cumulative_frequency": 0.1085,
+          "total_games": 255950,
+          "white_wins": 0.4685,
+          "draws": 0.0253,
+          "black_wins": 0.5062,
+          "stockfish_eval": 450.0,
+          "depth": 1,
+          "is_our_move": true,
+          "complete": true,
+          "children": []
+        }
+      ]
+    }
+  ]
+}

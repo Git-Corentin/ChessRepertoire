@@ -23,12 +23,14 @@
   Tree.init($("tree-container"));
   Target.init($("target-svg"), $("target-breadcrumb"));
   Training.init();
+  if (window.Correct) Correct.init();
 
   Board.init(GameState.color(), uci => Training.handleUserMove(uci));
 
   // ── Notation sous le board ───────────────────────────────────────────────
   GameState.subscribe((state, reason) => {
-    if (["nav-change", "training-update", "repertoire-change", "mode-change"]
+    if (["nav-change", "training-update", "repertoire-change", "mode-change",
+         "correction-loaded", "correction-cleared"]
         .includes(reason)) {
       _renderNotation(state);
     }
@@ -58,10 +60,28 @@
 
       const span = document.createElement("span");
       const isCurrent = i === state.navIndex;
-      const isFuture  = state.mode === "training" && i >= state.playIndex && !state.lineDone;
-      // Le coup à playIndex est révélé seulement si erreur ou indice
-      const isRevealedNow = i === state.playIndex && state.expectedMove;
-      const shouldHide = isFuture && !isRevealedNow;
+
+      // Coups futurs à masquer selon le mode :
+      // - training : masquer tout ce qui est >= playIndex (sauf si révélé)
+      // - correct+browsing : masquer tout ce qui est après error_at
+      // - correct+correcting : masquer tout ce qui n'est pas dans la ligne visible
+      //                        (la ligne est déjà tronquée + ajoutée par appendCorrectionMove)
+      let shouldHide = false;
+      if (state.mode === "training") {
+        const isFuture = i >= state.playIndex && !state.lineDone;
+        const isRevealedNow = i === state.playIndex && state.expectedMove;
+        shouldHide = isFuture && !isRevealedNow;
+      } else if (state.mode === "correct") {
+        const g = state.correctGame;
+        if (g && g.error_at !== null && g.error_at !== undefined) {
+          if (state.correctionPhase === "browsing") {
+            // Masquer tout ce qui vient APRÈS l'erreur
+            shouldHide = i > g.error_at;
+          }
+          // En correcting : la line est tronquée + reconstruite par GameState,
+          // donc tout ce qui est dans state.line est visible. Pas de masquage.
+        }
+      }
 
       span.className = [
         "notation-move",
@@ -69,11 +89,11 @@
         isCurrent ? "nav-current" : "",
         m.has_error    ? "n-error" : "",
         m.was_revealed ? "n-hint"  : "",
+        m.was_appended ? "n-appended" : "",
         shouldHide     ? "n-hidden" : "",
       ].filter(Boolean).join(" ");
       span.textContent = shouldHide ? "···" : m.move_san;
 
-      // Pas de clic sur les coups masqués
       const idx = i;
       if (!shouldHide) {
         span.addEventListener("click", () => GameState.navToIndex(idx));
@@ -115,6 +135,7 @@
     _slug = slug;
     _freq = freq;
     Training.setContext(slug, freq, _bias);
+    if (window.Correct) Correct.setContext(slug);
 
     try {
       const data = await fetch(`/api/tree/${slug}/?freq=${freq}`).then(r => r.json());
@@ -221,11 +242,12 @@
     GameState.setMode(mode);
     $("nav-target")?.classList.toggle("active",   mode === "viewing");
     $("nav-training")?.classList.toggle("active", mode === "training");
+    $("nav-correct")?.classList.toggle("active",  mode === "correct");
     $("panel-target")?.classList.toggle("active",   mode === "viewing");
     $("panel-training")?.classList.toggle("active", mode === "training");
+    $("panel-correct")?.classList.toggle("active",  mode === "correct");
 
     if (mode === "training") {
-      // Lancer une ligne automatiquement si on n'a pas déjà une ligne en cours
       const st = GameState.get();
       if (!st.line.length) {
         Training.startNewLine();
@@ -235,6 +257,13 @@
 
   $("nav-target")?.addEventListener("click",   () => switchView("viewing"));
   $("nav-training")?.addEventListener("click", () => switchView("training"));
+  $("nav-correct")?.addEventListener("click",  () => switchView("correct"));
+
+  // Événement custom utilisé par correct.js pour basculer vers un autre mode
+  window.addEventListener("switch-view", (e) => {
+    const mode = e.detail?.mode;
+    if (mode) switchView(mode);
+  });
 
   // ── Bouton "Revenir au début" du panel cible ─────────────────────────────
   $("target-back-btn")?.addEventListener("click", () => GameState.resetExploration());
@@ -245,9 +274,23 @@
   // En visualisation, pas de limite (toute la ligne explorée est accessible).
 
   function _maxVisibleIndex(state) {
+    // En mode correct : selon la phase, on limite la navigation
+    if (state.mode === "correct") {
+      const g = state.correctGame;
+      if (!g) return state.line.length - 1;
+      if (state.correctionPhase === "correcting") {
+        // En correction : on peut voir tous les coups AJOUTÉS par l'utilisateur,
+        // mais pas les coups futurs de la partie originale
+        // state.line contient déjà seulement les coups visibles (tronquée par appendCorrectionMove)
+        return state.line.length - 1;
+      }
+      // Phase browsing : max = coup fautif (on peut voir son erreur)
+      return (g.error_at !== null && g.error_at !== undefined)
+        ? g.error_at
+        : state.line.length - 1;
+    }
     if (state.mode !== "training") return state.line.length - 1;
     if (state.lineDone) return state.line.length - 1;
-    // Si le coup à playIndex est révélé (erreur ou indice), on peut l'atteindre
     const revealedNow = state.expectedMove != null;
     return revealedNow ? state.playIndex : state.playIndex - 1;
   }

@@ -29,7 +29,8 @@ const Training = (() => {
 
   // DOM cache
   let $status, $statusText, $progressBar, $btnHint, $btnNext,
-      $btnLock, $btnUnlock, $lockInd, $autoToggle;
+      $btnLock, $btnUnlock, $lockInd, $autoToggle,
+      $btnTrainErrors, $errorBadge;
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
@@ -43,12 +44,15 @@ const Training = (() => {
     $btnUnlock   = document.getElementById("btn-unlock");
     $lockInd     = document.getElementById("lock-indicator");
     $autoToggle  = document.getElementById("auto-chain-toggle");
+    $btnTrainErrors = document.getElementById("btn-train-errors");
+    $errorBadge  = document.getElementById("error-count-badge");
 
     $btnNext?.addEventListener("click", () => startNewLine());
     $btnHint?.addEventListener("click", () => requestHint());
     $btnLock?.addEventListener("click", () => lockPosition());
     $btnUnlock?.addEventListener("click", () => unlockPosition());
     $autoToggle?.addEventListener("change", e => GameState.setAutoChain(e.target.checked));
+    $btnTrainErrors?.addEventListener("click", () => startFromErrors());
 
     GameState.subscribe(_onStateChange);
   }
@@ -59,6 +63,27 @@ const Training = (() => {
       _renderProgress(state);
     }
     if (reason === "lock-change") _renderLock(state);
+    if (reason === "repertoire-change") _refreshErrorBadge();
+  }
+
+  /** Met à jour le badge avec le nombre d'erreurs sauvegardées pour ce répertoire. */
+  async function _refreshErrorBadge() {
+    if (!$errorBadge || !_slug) return;
+    try {
+      const resp = await fetch(`/api/correct/my-errors/?repertoire_slug=${encodeURIComponent(_slug)}`);
+      if (!resp.ok) { $errorBadge.classList.remove("visible"); return; }
+      const data = await resp.json();
+      const n = data.errors?.length || 0;
+      if (n > 0) {
+        $errorBadge.textContent = n;
+        $errorBadge.classList.add("visible");
+      } else {
+        $errorBadge.classList.remove("visible");
+      }
+      // Le bouton reste cliquable : si pas d'erreur, on affichera un message dans startFromErrors
+    } catch(e) {
+      console.warn(e);
+    }
   }
 
   // ── Démarrage d'une ligne ─────────────────────────────────────────────────
@@ -97,6 +122,42 @@ const Training = (() => {
     } catch(e) {
       console.error(e);
       _setStatus("error", "Erreur réseau");
+    }
+  }
+
+  /**
+   * Démarre une session d'entraînement sur une erreur sauvegardée (tirage
+   * aléatoire pondéré par la fréquence de l'erreur).
+   */
+  async function startFromErrors() {
+    if (!_slug) return;
+    _setStatus("waiting", "Tirage d'une erreur…");
+    Board.clearHighlights();
+
+    try {
+      const data = await _post("/api/training/start-from-errors/", {
+        slug: _slug,
+        freq: _freq,
+        weight_exponent: _bias,
+      });
+      const st = GameState.get();
+      if (st.repertoire) {
+        st.repertoire.root_fen      = data.root_fen      || st.repertoire.root_fen;
+        st.repertoire.color         = data.color         || st.repertoire.color;
+        st.repertoire.initial_moves = data.initial_moves || st.repertoire.initial_moves;
+      }
+      GameState.applyTrainingResponse(data);
+      if (data.error_info) {
+        _setStatus("your-turn",
+          `Erreur revue <strong>${data.error_info.count}×</strong> — coup attendu : <strong>${data.error_info.expected_san}</strong>. À toi de jouer.`);
+      }
+      _afterUpdate(data);
+    } catch(e) {
+      console.error(e);
+      const msg = e.message?.includes("Aucune erreur")
+        ? "Aucune erreur sauvegardée pour ce répertoire"
+        : "Erreur réseau";
+      _setStatus("error", msg);
     }
   }
 
@@ -250,7 +311,7 @@ const Training = (() => {
 
   return {
     init, setContext,
-    startNewLine, requestHint, lockPosition, unlockPosition,
+    startNewLine, startFromErrors, requestHint, lockPosition, unlockPosition,
     handleUserMove,
   };
 })();

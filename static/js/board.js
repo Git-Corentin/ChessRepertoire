@@ -74,23 +74,37 @@ const Board = (() => {
   function _onDragStart(source, piece) {
     const st = GameState.get();
 
-    // En visualisation : on autorise le drag de TOUTES les pièces (les deux couleurs)
+    // Mode correct
+    if (st.mode === "correct") {
+      // En phase browsing : pas de drag du tout (on regarde)
+      if (st.correctionPhase !== "correcting") return false;
+
+      // En phase correcting : on doit être à la bonne position
+      const g = st.correctGame;
+      if (!g || g.error_at === null) return false;
+
+      // On ne joue que ses propres pièces
+      const myColor = g.user_color;
+      if (myColor === "white" && piece.startsWith("b")) return false;
+      if (myColor === "black" && piece.startsWith("w")) return false;
+
+      return true;
+    }
+
+    // En visualisation : drag libre
     if (st.mode !== "training") {
       return true;
     }
 
-    // En entraînement : ligne terminée ou nav désynchronisée → bloque
+    // En entraînement
     if (st.lineDone) return false;
     if (GameState.isNavBehind()) {
       GameState.syncNavToPlay();
       return false;
     }
-
-    // Filtrer la couleur (on ne joue que nos pièces en entraînement)
     const myColor = GameState.color();
     if (myColor === "white" && piece.startsWith("b")) return false;
     if (myColor === "black" && piece.startsWith("w")) return false;
-
     return true;
   }
 
@@ -145,13 +159,32 @@ const Board = (() => {
       });
     }
 
+    // ── Mode correct+correcting : l'utilisateur tente de rejouer après l'erreur ──
+    if (st.mode === "correct") {
+      if (st.correctionPhase !== "correcting") {
+        return "snapback";
+      }
+      if (!window.Correct?.handleUserMove) return "snapback";
+      // handleUserMove retourne true si le coup est accepté, false sinon
+      const accepted = Correct.handleUserMove(uci, uciForms, move);
+      if (!accepted) {
+        // Coup refusé : son d'erreur déjà joué par Correct, on snap back
+        return "snapback";
+      }
+      // Coup accepté : sons + state update déjà gérés par Correct
+      const isCapture = move.flags && move.flags.includes("c");
+      if (window.Sounds) Sounds.play(isCapture ? "capture" : "move");
+      _suppressNextSound = true;
+      _userDropFen = _chess.fen();
+      return;
+    }
+
     // ── Mode visualisation : naviguer dans le répertoire ──────────────────
     if (st.mode !== "training") {
       const currentChildren = (st.navIndex < 0)
         ? (st.repertoire?.children || [])
         : (st.line[st.navIndex]?.children || []);
 
-      // Chercher une correspondance avec l'une des formes UCI
       const matched = currentChildren.find(c => uciForms.includes(c.move_uci));
       if (!matched) {
         if (window.Sounds) Sounds.play("error");
@@ -162,6 +195,7 @@ const Board = (() => {
       const isCapture = move.flags && move.flags.includes("c");
       if (window.Sounds) Sounds.play(isCapture ? "capture" : "move");
       _suppressNextSound = true;
+      _userDropFen = _chess.fen();
       GameState.setExplorationPath(newPath);
       return;
     }
@@ -174,6 +208,7 @@ const Board = (() => {
     const isCapture = move.flags && move.flags.includes("c");
     if (window.Sounds) Sounds.play(isCapture ? "capture" : "move");
     _suppressNextSound = true;
+    _userDropFen = _chess.fen();  // FEN après notre coup → _onStateChange skip
 
     if (_onUserMove) _onUserMove(uciToSend);
   }
@@ -187,7 +222,8 @@ const Board = (() => {
   // ── Réaction au GameState ────────────────────────────────────────────────
 
   let _lastDisplayedFen = null;
-  let _suppressNextSound = false;  // mis à true par _onDrop pour éviter le double-son
+  let _suppressNextSound = false;   // mis à true par _onDrop pour éviter le double-son
+  let _userDropFen = null;  // FEN produit par le dernier drop user (pour éviter le flash)
 
   function _onStateChange(state, reason) {
     const fen = GameState.currentFen();
@@ -198,23 +234,35 @@ const Board = (() => {
       _orientation = newOrientation;
       _create();
       _lastDisplayedFen = fen;
+      _userDropFen = null;
       return;
     }
 
+    // Si la POSITION des pièces est la même que celle produite par un drop user,
+    // on ne re-rend pas le board (chessboard.js gère via _onSnapEnd).
+    // Mais si on passe à un FEN différent (coup adverse suivant), on rend.
+    const skipBoardUpdate = (_userDropFen !== null)
+      && _samePosition(fen, _userDropFen);
+    if (skipBoardUpdate) {
+      _userDropFen = null;  // consommé
+    }
+
     // Sinon, juste mettre à jour la position
-    if (fen && _board) {
+    if (fen && _board && !skipBoardUpdate) {
       _board.position(fen, true);
 
       // Son si la position a vraiment changé (et qu'on n'est pas dans un drop user)
       if (fen !== _lastDisplayedFen && _lastDisplayedFen !== null) {
         if (!_suppressNextSound && window.Sounds) {
-          // Détecter capture en comparant le nombre de pièces
           const wasCapture = _countPieces(_lastDisplayedFen) > _countPieces(fen);
           Sounds.play(wasCapture ? "capture" : "move");
         }
         _suppressNextSound = false;
       }
       _lastDisplayedFen = fen;
+    } else if (skipBoardUpdate) {
+      _lastDisplayedFen = fen;
+      _suppressNextSound = false;
     }
 
     // Highlights
@@ -228,6 +276,14 @@ const Board = (() => {
   function _countPieces(fen) {
     if (!fen) return 0;
     return (fen.split(" ")[0].match(/[a-zA-Z]/g) || []).length;
+  }
+
+  /** Compare la position des pièces (4 premiers champs du FEN, sans compteurs). */
+  function _samePosition(a, b) {
+    if (!a || !b) return false;
+    const ka = a.split(" ").slice(0, 4).join(" ");
+    const kb = b.split(" ").slice(0, 4).join(" ");
+    return ka === kb;
   }
 
   /** Appelé par training.js juste avant l'envoi pour éviter le double son. */

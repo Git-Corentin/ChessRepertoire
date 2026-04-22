@@ -59,6 +59,11 @@ const GameState = (() => {
   /** FEN à afficher actuellement sur le board. */
   function currentFen() {
     if (_state.navIndex < 0) {
+      // Position initiale : racine de la partie en mode correct, ou racine du répertoire
+      if (_state.mode === "correct") {
+        return _state.repertoire?.correction_root_fen
+          || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+      }
       return _state.repertoire?.root_fen || null;
     }
     return _state.line[_state.navIndex]?.fen_after || null;
@@ -193,6 +198,123 @@ const GameState = (() => {
     _notify("lock-change");
   }
 
+  // ── Mode correct : charger une partie ────────────────────────────────────
+
+  /**
+   * Charge une partie à corriger dans GameState. Calcule les FEN de chaque demi-coup.
+   * game : { moves_uci, moves_san, user_color, error_at, played_san, expected_moves, game_id, opponent, result }
+   * root_fen : position initiale de la partie (standard start position si non fourni)
+   *
+   * Après chargement, on se positionne DIRECTEMENT sur le coup fautif
+   * (navIndex = error_at) et on entre en phase "browsing".
+   */
+  function loadCorrectionGame(game, root_fen) {
+    _state.mode = "correct";
+    _state.correctGame = game;
+    _state.correctionPhase = "browsing";   // browsing | correcting
+    _state.correctionLineExtra = [];       // coups joués par user en phase correcting
+
+    const chess = new Chess(root_fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    const line = [];
+    for (let i = 0; i < game.moves_uci.length; i++) {
+      const uci = game.moves_uci[i];
+      const from = uci.slice(0, 2);
+      const to   = uci.slice(2, 4);
+      const promo = uci.length > 4 ? uci[4] : undefined;
+      const mv = chess.move({ from, to, promotion: promo });
+      if (!mv) break;
+      const is_user_move = (game.user_color === "white" && i % 2 === 0)
+                        || (game.user_color === "black" && i % 2 === 1);
+      line.push({
+        move_uci: uci,
+        move_san: game.moves_san[i] || mv.san,
+        fen_after: chess.fen(),
+        is_our_move: is_user_move,
+        has_error: i === game.error_at,
+      });
+    }
+
+    _state.line = line;
+    _state.repertoire = _state.repertoire || {};
+    _state.repertoire.correction_root_fen = root_fen
+      || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    // Positionner directement sur le coup fautif (ou au début si pas d'erreur)
+    if (game.error_at !== null && game.error_at !== undefined) {
+      _state.navIndex = game.error_at;
+    } else {
+      _state.navIndex = -1;
+    }
+    _state.playIndex = 0;
+    _state.errors = [];
+    _state.revealed = [];
+    _state.expectedMove = null;
+    _state.lineDone = false;
+    _notify("correction-loaded");
+  }
+
+  /** Passe de "browsing" à "correcting" : l'utilisateur va rejouer le coup. */
+  function startCorrecting() {
+    if (_state.mode !== "correct") return;
+    const g = _state.correctGame;
+    if (!g || g.error_at === null || g.error_at === undefined) return;
+    _state.correctionPhase = "correcting";
+    _state.correctionLineExtra = [];
+    // Se placer à la position JUSTE AVANT l'erreur
+    _state.navIndex = g.error_at - 1;
+    _notify("correction-phase-change");
+  }
+
+  /** Retour en phase "browsing" : l'utilisateur revoit son erreur originale. */
+  function reviewError() {
+    if (_state.mode !== "correct") return;
+    const g = _state.correctGame;
+    if (!g || g.error_at === null || g.error_at === undefined) return;
+    _state.correctionPhase = "browsing";
+    _state.correctionLineExtra = [];
+    // Tronquer la ligne à la longueur originale de la partie
+    // (au cas où l'utilisateur aurait ajouté des coups en corrigeant)
+    if (g.moves_uci && _state.line.length > g.moves_uci.length) {
+      _state.line = _state.line.slice(0, g.moves_uci.length);
+    }
+    // Rétablir has_error sur le coup fautif d'origine (au cas où on l'aurait modifié)
+    _state.line.forEach((n, i) => { n.has_error = (i === g.error_at); });
+    _state.navIndex = g.error_at;
+    _notify("correction-phase-change");
+  }
+
+  /**
+   * Ajoute un coup joué par l'utilisateur en phase correcting.
+   * move: { uci, san, fen_after, is_our_move }
+   */
+  function appendCorrectionMove(move) {
+    if (_state.mode !== "correct" || _state.correctionPhase !== "correcting") return;
+    const g = _state.correctGame;
+    // Si on est encore en train d'ajouter depuis la position d'erreur,
+    // on tronque la ligne à navIndex et on ajoute à la suite
+    _state.line = _state.line.slice(0, _state.navIndex + 1);
+    _state.line.push({
+      move_uci: move.uci,
+      move_san: move.san,
+      fen_after: move.fen_after,
+      is_our_move: move.is_our_move,
+      has_error: false,
+      was_appended: true,  // marque les coups ajoutés en phase correcting
+    });
+    _state.navIndex = _state.line.length - 1;
+    _state.correctionLineExtra.push(move);
+    _notify("correction-move-added");
+  }
+
+  function clearCorrection() {
+    _state.correctGame = null;
+    _state.correctionPhase = null;
+    _state.correctionLineExtra = [];
+    _state.line = [];
+    _state.navIndex = -1;
+    _notify("correction-cleared");
+  }
+
   // ── API publique ──────────────────────────────────────────────────────────
   return {
     subscribe, get, currentFen, color,
@@ -201,6 +323,8 @@ const GameState = (() => {
     applyTrainingResponse,
     navForward, navBackward, navToIndex, syncNavToPlay, isNavBehind,
     setAutoChain, setLock,
+    loadCorrectionGame, clearCorrection,
+    startCorrecting, reviewError, appendCorrectionMove,
   };
 })();
 
