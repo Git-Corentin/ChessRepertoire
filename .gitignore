@@ -27,3 +27,4 @@ staticfiles/
 Thumbs.db
 
 sessions/
+session*
