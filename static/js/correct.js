@@ -12,36 +12,54 @@
 const Correct = (() => {
 
   let $username, $months, $onlyErrors, $fetchBtn, $status, $gamesList;
-  let $fixBtn, $nextBtn, $backListBtn, $gameActions;
+  let $gameActions, $backListBtn, $nextBtn;
+  let $errorActions, $fixBtn, $seeSolutionBtn;
+  let $solvedActions, $continueBtn, $autoNextToggle;
   let _slug = null;
   let _games = [];
   let _selectedGameId = null;
   let _selectedGame = null;
-  // Pour éviter d'enregistrer plusieurs fois la même erreur dans la base
   const _errorSavedFor = new Set();
-  // Nombre de fois que l'utilisateur a rejoué la même erreur (pour message)
   let _samePlayedCount = 0;
+  let _solvedFen = null;
+  let _solutionViewed = false; // true si l'utilisateur a demandé "Voir la solution"
+  let _phase = "browsing";
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
   function init() {
-    $username   = document.getElementById("correct-username");
-    $months     = document.getElementById("correct-months");
-    $onlyErrors = document.getElementById("correct-only-errors");
-    $fetchBtn   = document.getElementById("correct-fetch-btn");
-    $status     = document.getElementById("correct-status");
-    $gamesList  = document.getElementById("correct-games-list");
+    $username    = document.getElementById("correct-username");
+    $months      = document.getElementById("correct-months");
+    $onlyErrors  = document.getElementById("correct-only-errors");
+    $fetchBtn    = document.getElementById("correct-fetch-btn");
+    $status      = document.getElementById("correct-status");
+    $gamesList   = document.getElementById("correct-games-list");
     $gameActions = document.getElementById("correct-game-actions");
-    $fixBtn     = document.getElementById("correct-fix-btn");
-    $nextBtn    = document.getElementById("correct-next-btn");
     $backListBtn = document.getElementById("correct-back-list-btn");
+    $nextBtn     = document.getElementById("correct-next-btn");
+    // Zone 1 : actions sur l'erreur
+    $errorActions    = document.getElementById("correct-error-actions");
+    $fixBtn          = document.getElementById("correct-fix-btn");
+    $seeSolutionBtn  = document.getElementById("correct-see-solution-btn");
+    // Zone 2 : après solution
+    $solvedActions   = document.getElementById("correct-solved-actions");
+    $continueBtn     = document.getElementById("correct-continue-btn");
+    $autoNextToggle  = document.getElementById("correct-auto-next-toggle");
 
     if (!$fetchBtn) return;
 
     $fetchBtn.addEventListener("click", _onFetch);
     $fixBtn?.addEventListener("click", _onFixNow);
+    $seeSolutionBtn?.addEventListener("click", _onSeeSolution);
     $nextBtn?.addEventListener("click", _onNextGame);
     $backListBtn?.addEventListener("click", _onBackToList);
+    $continueBtn?.addEventListener("click", _onContinueInTraining);
+    $autoNextToggle?.addEventListener("change", e => {
+      // Si on active sur une phase solved déjà atteinte → passer à la suivante
+      if (e.target.checked && _phase === "solved" && !_solutionViewed) {
+        setTimeout(() => _onNextGame(), 600);
+      }
+    });
 
     try {
       const stored = localStorage.getItem("correct-username");
@@ -62,6 +80,40 @@ const Correct = (() => {
 
   function setContext(slug) {
     _slug = slug;
+  }
+
+  // ── Gestion des phases ────────────────────────────────────────────────────
+
+  /**
+   * Point central de rendu des boutons selon la phase.
+   * Phase "browsing"  : [Corriger] [Voir la solution]
+   * Phase "correcting": [Revoir l'erreur] [Voir la solution]
+   * Phase "solved"    : [Poursuivre?] + toggle auto-suivante + [Erreur suivante]
+   */
+  function _setPhase(phase) {
+    _phase = phase;
+    const hasError = _selectedGame?.error_at !== null && _selectedGame?.error_at !== undefined;
+
+    // Zone 1 : actions erreur
+    if ($errorActions) {
+      $errorActions.style.display = (phase === "browsing" || phase === "correcting") ? "" : "none";
+    }
+    // Label du bouton Corriger / Revoir l'erreur
+    if ($fixBtn) {
+      $fixBtn.textContent = phase === "correcting" ? "Revoir l'erreur" : "Corriger";
+      $fixBtn.style.display = hasError ? "" : "none";
+    }
+    // Voir la solution : toujours visible en browsing et correcting
+    if ($seeSolutionBtn) {
+      $seeSolutionBtn.style.display = (phase === "browsing" || phase === "correcting") ? "" : "none";
+    }
+
+    // Zone 2 : après solution
+    if ($solvedActions) {
+      $solvedActions.style.display = phase === "solved" ? "" : "none";
+    }
+    // Poursuivre : calculé séparément via _showContinueIfAvailable
+    // Toggle auto-suivante : visible en solved, jamais masqué indépendamment de la phase
   }
 
   // ── Fetch ────────────────────────────────────────────────────────────────
@@ -197,37 +249,33 @@ const Correct = (() => {
   function _selectGame(g) {
     _selectedGameId = g.game_id;
     _selectedGame = g;
+    _samePlayedCount = 0;
+    _solvedFen = null;
+    _solutionViewed = false;
     $gamesList.querySelectorAll(".game-card").forEach(c => {
       c.classList.toggle("selected", c.dataset.gameId === g.game_id);
     });
 
-    // Charger la partie — loadCorrectionGame positionne directement à l'erreur
     GameState.loadCorrectionGame(g, null);
 
-    // Afficher les boutons d'action
     $gameActions?.classList.add("visible");
-    if ($fixBtn) {
-      $fixBtn.textContent = "Corriger";
-      $fixBtn.style.display = (g.error_at !== null && g.error_at !== undefined) ? "" : "none";
-    }
-
     if ($gamesList) $gamesList.style.display = "none";
+    if ($continueBtn) { $continueBtn.style.display = "none"; $continueBtn.disabled = false; }
 
     if (g.error_at !== null && g.error_at !== undefined) {
-      // Son d'erreur dès l'arrivée sur la position fautive
       if (window.Sounds) Sounds.play("error");
-      // Highlight rouge sur le board
       if (window.Board) Board.highlightError(g.played_uci);
-
       const halfMove = g.error_at;
       const moveNum = Math.floor(halfMove / 2) + 1;
       const dots = halfMove % 2 === 0 ? "." : "...";
       _showStatus(
-        `Coup ${moveNum}${dots} — tu as joué <strong>${g.played_san}</strong>, coup attendu : <strong>${_formatExpected(g.expected_moves)}</strong>. Clique sur Corriger pour rejouer.`,
+        `Au coup ${moveNum}${dots} tu as joué <strong>${g.played_san}</strong>.`,
         "error"
       );
+      _setPhase("browsing");
     } else {
       _showStatus(`Partie suivie sans erreur (${g.depth_reached} coups).`, "info");
+      _setPhase("solved");  // aucune erreur → on va direct à solved (bouton erreur suivante)
     }
   }
 
@@ -235,150 +283,184 @@ const Correct = (() => {
     if (!expected || !expected.length) return "?";
     if (expected.length === 1) return expected[0].san;
     const sorted = [...expected].sort((a, b) => (b.frequency || 0) - (a.frequency || 0));
-    const top = sorted.slice(0, 3).map(m => m.san);
-    return top.join(" / ") + (sorted.length > 3 ? "…" : "");
+    return sorted.slice(0, 3).map(m => m.san).join(" / ") + (sorted.length > 3 ? "…" : "");
   }
 
-  // ── Actions : Se corriger, partie suivante, retour liste ─────────────────
+  // ── Actions ───────────────────────────────────────────────────────────────
 
-  /**
-   * Appelé par Board._onDrop quand l'utilisateur joue un coup en phase correcting.
-   * Gère la validation :
-   *   - Coup correct (∈ expected_moves) → ajoute le coup au GameState, son success
-   *   - Même erreur qu'avant → son error, snap back, message "même erreur"
-   *   - Autre coup hors répertoire → son error, snap back, message générique
-   *
-   * @returns {boolean} true si le coup a été accepté, false sinon
-   */
   function handleUserMove(playedUci, playedUciForms, move) {
     if (!_selectedGame) return false;
     const expected = _selectedGame.expected_moves || [];
     const originalErrorUci = _selectedGame.played_uci;
 
-    const matched = expected.find(e =>
-      playedUciForms.includes(e.uci) || playedUci === e.uci
-    );
+    const matched = expected.find(e => playedUciForms.includes(e.uci) || playedUci === e.uci);
 
     if (matched) {
-      // ✓ Bon coup
       if (window.Sounds) Sounds.play("correct");
       const state = GameState.get();
       const currentFen = state.line[state.navIndex]?.fen_after
-         || state.repertoire?.correction_root_fen;
+        || state.repertoire?.correction_root_fen;
       const tmp = new Chess(currentFen);
-      tmp.move({
-        from: playedUci.slice(0,2),
-        to:   playedUci.slice(2,4),
-        promotion: playedUci.length > 4 ? playedUci[4] : undefined,
-      });
+      tmp.move({ from: playedUci.slice(0,2), to: playedUci.slice(2,4),
+                 promotion: playedUci.length > 4 ? playedUci[4] : undefined });
       GameState.appendCorrectionMove({
-        uci: matched.uci,
-        san: matched.san,
-        fen_after: tmp.fen(),
-        is_our_move: true,
+        uci: matched.uci, san: matched.san,
+        fen_after: tmp.fen(), is_our_move: true,
       });
-      _showStatus(
-        `✓ Bravo, <strong>${matched.san}</strong> est le bon coup !`,
-        "success"
-      );
+      _solvedFen = tmp.fen();
+      _showStatus(`✓ Bravo, <strong>${matched.san}</strong> est le bon coup !`, "success");
+      _setPhase("solved");
+      _showContinueIfAvailable(_solvedFen);
+      // Auto-next uniquement si l'utilisateur a trouvé lui-même (pas demandé la solution)
+      if ($autoNextToggle?.checked && !_solutionViewed) {
+        setTimeout(() => _onNextGame(), 1200);
+      }
       return true;
     }
 
-    // Coup incorrect
-    const isSameError = playedUciForms.includes(originalErrorUci)
-                     || playedUci === originalErrorUci;
-
+    const isSameError = playedUciForms.includes(originalErrorUci) || playedUci === originalErrorUci;
     if (window.Sounds) Sounds.play("error");
-    if (isSameError) {
-      _samePlayedCount++;
-      _showStatus(
-        `Tu fais la même erreur ! Coup attendu : <strong>${_formatExpected(expected)}</strong>`,
-        "error"
-      );
-    } else {
-      _showStatus(
-        `Coup hors répertoire. Coup attendu : <strong>${_formatExpected(expected)}</strong>`,
-        "error"
-      );
-    }
+    _showStatus(
+      isSameError
+        ? `Tu fais la même erreur ! Essaie encore.`
+        : `Coup hors répertoire. Essaie encore.`,
+      "error"
+    );
     return false;
   }
 
-  /**
-   * Bouton "Corriger" ↔ "Revoir l'erreur".
-   *   - Si on est en phase browsing : passer en correcting (rejouer le coup).
-   *     Enregistre l'erreur en base.
-   *   - Si on est en phase correcting : revenir en browsing (revoir son erreur).
-   */
   async function _onFixNow() {
     if (!_selectedGame || _selectedGame.error_at === null) return;
-
-    const state = GameState.get();
-    const phase = state.correctionPhase;
-
-    if (phase === "browsing") {
-      // Passer en correction : enregistrer l'erreur + basculer
+    if (_phase === "browsing") {
+      // Sauvegarder l'erreur
+      const state = GameState.get();
       const errIdx = _selectedGame.error_at;
-      const preFen = (errIdx === 0)
-        ? (state.repertoire?.correction_root_fen || null)
+      const preFen = errIdx === 0
+        ? state.repertoire?.correction_root_fen
         : state.line[errIdx - 1]?.fen_after;
-
-      // Sauvegarde async non-bloquante
       if (!_errorSavedFor.has(_selectedGame.game_id)) {
         _errorSavedFor.add(_selectedGame.game_id);
-        const expectedMove = _selectedGame.expected_moves?.[0];
+        const exp = _selectedGame.expected_moves?.[0];
         _saveError({
-          fen: preFen,
-          expected_uci: expectedMove?.uci,
-          expected_san: expectedMove?.san,
-          played_uci: _selectedGame.played_uci,
-          played_san: _selectedGame.played_san,
-          repertoire_slug: _slug,
-          game_id: _selectedGame.game_id,
-        }).catch(e => console.warn("[CORRECT] save-error échoué :", e));
+          fen: preFen, expected_uci: exp?.uci, expected_san: exp?.san,
+          played_uci: _selectedGame.played_uci, played_san: _selectedGame.played_san,
+          repertoire_slug: _slug, game_id: _selectedGame.game_id,
+        }).catch(e => console.warn("[CORRECT] save-error:", e));
       }
-
-      // Basculer en mode correcting
       GameState.startCorrecting();
-      _samePlayedCount = 0;
-      if ($fixBtn) $fixBtn.textContent = "Revoir l'erreur";
       if (window.Board) Board.clearHighlights();
-      _showStatus(
-        `À toi de jouer — coup attendu : <strong>${_formatExpected(_selectedGame.expected_moves)}</strong>`,
-        "info"
-      );
-    } else if (phase === "correcting") {
-      // Revenir à la position d'erreur pour la revoir
+      _showStatus("À toi de jouer. Rejoue le bon coup.", "info");
+      _setPhase("correcting");
+
+    } else if (_phase === "correcting") {
+      // Revoir l'erreur
       GameState.reviewError();
       if (window.Sounds) Sounds.play("error");
       if (window.Board) Board.highlightError(_selectedGame.played_uci);
-      if ($fixBtn) $fixBtn.textContent = "Corriger";
       const halfMove = _selectedGame.error_at;
       const moveNum = Math.floor(halfMove / 2) + 1;
       const dots = halfMove % 2 === 0 ? "." : "...";
-      _showStatus(
-        `Coup ${moveNum}${dots} — tu avais joué <strong>${_selectedGame.played_san}</strong>, coup attendu : <strong>${_formatExpected(_selectedGame.expected_moves)}</strong>`,
-        "error"
-      );
+      _showStatus(`Au coup ${moveNum}${dots} tu avais joué <strong>${_selectedGame.played_san}</strong>.`, "error");
+      _setPhase("browsing");
     }
   }
 
-  /**
-   * "Partie suivante" : charge la partie suivante dans la liste (avec erreur).
-   */
   function _onNextGame() {
     if (!_games.length) { _onBackToList(); return; }
-    const curIdx = _games.findIndex(g => g.game_id === _selectedGameId);
-    // On cherche la prochaine partie avec erreur (ou la première si pas trouvé)
-    const nextErrIdx = _games.findIndex((g, i) =>
-      i > curIdx && g.error_at !== null && g.error_at !== undefined
-    );
-    if (nextErrIdx >= 0) {
-      _selectGame(_games[nextErrIdx]);
-    } else {
-      _showStatus("✓ Plus de partie avec erreur dans la liste !", "info");
-      _onBackToList();
+    const errGames = _games.filter(g => g.error_at !== null && g.error_at !== undefined);
+    if (errGames.length === 0) {
+      _showStatus("Aucune partie avec erreur dans la liste.", "info");
+      _onBackToList(); return;
     }
+    const curIdx = errGames.findIndex(g => g.game_id === _selectedGameId);
+    const nextIdx = (curIdx + 1) % errGames.length;
+    if (nextIdx === 0 && curIdx !== -1) {
+      // On a fait le tour
+      _showStatus("✓ Toutes les erreurs revues ! Recommence ou charge de nouvelles parties.", "info");
+      _onBackToList(); return;
+    }
+    _selectGame(errGames[nextIdx]);
+  }
+
+  function _onSeeSolution() {
+    if (!_selectedGame) return;
+    const exp = _selectedGame.expected_moves?.[0];
+    if (!exp) return;
+
+    _solutionViewed = true;
+
+    const state = GameState.get();
+    const errIdx = _selectedGame.error_at;
+
+    // FEN avant l'erreur
+    const preFen = errIdx === 0
+      ? (state.repertoire?.correction_root_fen
+         || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+      : state.line[errIdx - 1]?.fen_after;
+
+    // FEN après le bon coup
+    let solvedFen = null;
+    try {
+      const tmp = new Chess(preFen);
+      const mv = tmp.move({ from: exp.uci.slice(0,2), to: exp.uci.slice(2,4),
+                            promotion: exp.uci.length > 4 ? exp.uci[4] : undefined });
+      if (mv) solvedFen = tmp.fen();
+    } catch(e) {}
+    _solvedFen = solvedFen;
+
+    const errUci = _selectedGame.played_uci;
+    const isOnError = state.navIndex === errIdx; // le mauvais coup est visible
+
+    // Fonction qui anime le bon coup depuis preFen
+    const playGoodMove = () => {
+      if (window.Board) Board.setPosition(preFen);
+      if (window.Board) Board.clearHighlights();
+      // Highlights rouge sur cases de l'erreur
+      if (errUci && window.Board) {
+        Board.highlightSquare(errUci.slice(0,2), "highlight-error");
+        Board.highlightSquare(errUci.slice(2,4), "highlight-error");
+      }
+      // Animer le bon coup
+      if (solvedFen && window.Board) {
+        Board.animateMove(exp.uci.slice(0,2), exp.uci.slice(2,4), solvedFen, 200);
+        if (window.Sounds) Sounds.play("move");
+      }
+      // Vert par-dessus rouge après l'animation
+      setTimeout(() => {
+        if (window.Board) {
+          Board.highlightSquare(exp.uci.slice(0,2), "highlight-hint");
+          Board.highlightSquare(exp.uci.slice(2,4), "highlight-hint");
+        }
+      }, 205);
+    };
+
+    if (isOnError && errUci && preFen && window.Board) {
+      // Animer le retrait du mauvais coup (destination → source)
+      Board.animateMove(errUci.slice(2,4), errUci.slice(0,2), preFen, 180);
+      if (window.Sounds) Sounds.play("move");
+      setTimeout(playGoodMove, 280);
+    } else {
+      // Déjà avant l'erreur (phase correcting ou autre) → jouer directement
+      setTimeout(playGoodMove, 30);
+    }
+
+    _showStatus(
+      `Erreur : <strong>${_selectedGame.played_san}</strong> → Solution : <strong>${_formatExpected(_selectedGame.expected_moves)}</strong>`,
+      "info"
+    );
+    _setPhase("solved");
+    _showContinueIfAvailable(solvedFen);
+    // Pas d'auto-next ici
+  }
+
+  /** Affiche le bouton Poursuivre si la position a des enfants dans le répertoire. */
+  function _showContinueIfAvailable(fen) {
+    if (!$continueBtn) return;
+    const hasNext = _positionHasRepertoireChildren(fen);
+    if (!hasNext) { $continueBtn.style.display = "none"; return; }
+    // Si auto-next actif : Poursuivre visible seulement si on a demandé la solution
+    const autoNext = !!$autoNextToggle?.checked;
+    $continueBtn.style.display = (!autoNext || _solutionViewed) ? "" : "none";
   }
 
   /** Retour à la liste : on efface la sélection et réaffiche la liste. */
@@ -411,7 +493,7 @@ const Correct = (() => {
 
   function _showStatus(msg, kind) {
     if (!$status) return;
-    $status.textContent = msg;
+    $status.innerHTML = msg;    // innerHTML pour les balises <strong>, etc.
     $status.className = `visible ${kind || ""}`.trim();
   }
 
@@ -425,6 +507,34 @@ const Correct = (() => {
 
   function _formatResult(r) {
     return { win: "Victoire", loss: "Défaite", draw: "Nulle" }[r] || r;
+  }
+
+  function _positionHasRepertoireChildren(fen) {
+    if (!fen) return false;
+    const normFen = fen.split(" ").slice(0, 4).join(" ");
+    const st = GameState.get();
+    const children = st.repertoire?.children || [];
+    function walk(nodes) {
+      for (const n of nodes) {
+        const nFen = (n.fen_after || "").split(" ").slice(0, 4).join(" ");
+        if (nFen === normFen) return (n.children || []).length > 0;
+        if (walk(n.children || [])) return true;
+      }
+      return false;
+    }
+    return walk(children);
+  }
+
+  function _onContinueInTraining() {
+    // Utiliser _solvedFen pour être sûr d'avoir la position après le bon coup
+    const fen = _solvedFen || GameState.currentFen();
+    if (!fen || !_slug) return;
+    fetch("/api/training/lock/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+      body: JSON.stringify({ lock_fen: fen, lock_node_path: [] }),
+    }).then(() => GameState.setLock(fen, [])).catch(e => console.error(e));
+    window.dispatchEvent(new CustomEvent("switch-view", { detail: { mode: "training" } }));
   }
 
   function _csrf() {

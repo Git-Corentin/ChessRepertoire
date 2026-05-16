@@ -1,31 +1,34 @@
 /**
- * board.js — Wrapper de chessboard.js piloté par GameState.
+ * board.js — Échiquier piloté par GameState.
  *
- * Responsabilités
- * ───────────────
- *  - Affiche le FEN courant de GameState (réagit aux changements de navIndex)
- *  - En mode training : permet le drag-and-drop, transmet à TRAINING.handleUserMove
- *  - Highlights : dernier coup joué, hint (vert), erreur (rouge)
- *  - Resize automatique
+ * Philosophie de rendu (anti-flash) :
+ * ─────────────────────────────────────
+ * • moveSpeed:false → chessboard.js place les pièces instantanément, sans animation native
+ * • Animations gérées en CSS custom (_animateMove) pour le coup adverse uniquement
+ * • Après un drop user, _onSnapEnd est inhibé (_pendingDrop) car _onStateChange gère tout
+ * • _onStateChange est la seule source de vérité pour l'affichage
  */
 "use strict";
 
 const Board = (() => {
 
-  let _board   = null;          // instance Chessboard
-  let _chess   = null;          // instance chess.js — utilisée pour valider/normaliser les coups
-  let _size    = 480;
+  let _board       = null;
+  let _chess       = null;
+  let _size        = 480;
   let _orientation = "white";
-  let _onUserMove = null;       // callback (uci) => void, transmis par main.js
-  let _lastHighlight = [];      // squares actuellement surlignées
+  let _onUserMove  = null;
+  let _lastHighlight = [];
+
+  // Flags anti-flash
+  let _pendingDrop      = false;  // drop en cours → inhiber _onSnapEnd
+  let _wasSnapback      = false;  // dernier drop était un snapback
+  let _suppressNextSound= false;  // son déjà joué par le drop → inhiber dans _onStateChange
+
+  // FEN affiché la dernière fois (pour détecter les vrais changements)
+  let _lastDisplayedFen = null;
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
-  /**
-   * Initialise (ou ré-initialise) l'échiquier.
-   * @param {string} orientation - "white" | "black"
-   * @param {function} onUserMove - callback quand l'utilisateur drop une pièce
-   */
   function init(orientation, onUserMove) {
     _orientation = orientation;
     _onUserMove  = onUserMove;
@@ -46,27 +49,55 @@ const Board = (() => {
     if (c) { c.style.width = `${_size}px`; c.style.height = `${_size}px`; }
   }
 
-  function _onResize() {
-    _computeSize();
-    _board?.resize();
-  }
+  function _onResize() { _computeSize(); _board?.resize(); }
 
   function _create() {
     if (_board) { _board.destroy(); _board = null; }
-
-    const cfg = {
+    _board = Chessboard("board-container", {
       position:    GameState.currentFen() || "start",
       orientation: _orientation,
-      draggable:   true,                              // toujours draggable, on filtre dans onDragStart
+      draggable:   true,
       pieceTheme:  "/static/img/chesspieces/wikipedia/{piece}.png",
       onDragStart: _onDragStart,
       onDrop:      _onDrop,
       onSnapEnd:   _onSnapEnd,
-      moveSpeed:   200,
+      moveSpeed:   false,
       snapSpeed:   60,
-    };
-    _board = Chessboard("board-container", cfg);
-    setTimeout(() => _board.resize(), 0);
+    });
+    setTimeout(() => _board?.resize(), 0);
+  }
+
+  // ── Animation CSS custom ──────────────────────────────────────────────────
+
+  /**
+   * Anime une pièce de fromSq vers toSq sans bug de double-pièce.
+   * Principe : place d'abord à destination, translate visuellement vers la source,
+   * puis anime le retour (transition CSS). La pièce n'est jamais visible deux fois.
+   */
+  function _animateMove(fromSq, toSq, newFen, duration = 200) {
+    const fromEl = document.querySelector(`#board-container [data-square="${fromSq}"]`);
+    const toEl   = document.querySelector(`#board-container [data-square="${toSq}"]`);
+    if (!fromEl || !toEl) { if (_board) _board.position(newFen, false); return; }
+
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect   = toEl.getBoundingClientRect();
+    const dx = fromRect.left - toRect.left;
+    const dy = fromRect.top  - toRect.top;
+
+    _board.position(newFen, false);
+
+    const pieceImg = toEl.querySelector("img.piece-417db");
+    if (!pieceImg) return;
+
+    pieceImg.style.transition = "none";
+    pieceImg.style.transform  = `translate(${dx}px, ${dy}px)`;
+    void pieceImg.offsetWidth;                                    // force repaint
+    pieceImg.style.transition = `transform ${duration}ms ease-in-out`;
+    pieceImg.style.transform  = "translate(0, 0)";
+    pieceImg.addEventListener("transitionend", () => {
+      pieceImg.style.transition = "";
+      pieceImg.style.transform  = "";
+    }, { once: true });
   }
 
   // ── Drag & drop ───────────────────────────────────────────────────────────
@@ -74,229 +105,251 @@ const Board = (() => {
   function _onDragStart(source, piece) {
     const st = GameState.get();
 
-    // Mode correct
     if (st.mode === "correct") {
-      // En phase browsing : pas de drag du tout (on regarde)
       if (st.correctionPhase !== "correcting") return false;
-
-      // En phase correcting : on doit être à la bonne position
       const g = st.correctGame;
       if (!g || g.error_at === null) return false;
-
-      // On ne joue que ses propres pièces
       const myColor = g.user_color;
       if (myColor === "white" && piece.startsWith("b")) return false;
       if (myColor === "black" && piece.startsWith("w")) return false;
-
       return true;
     }
 
-    // En visualisation : drag libre
-    if (st.mode !== "training") {
-      return true;
-    }
+    if (st.mode !== "training") return true;
 
-    // En entraînement
     if (st.lineDone) return false;
-    if (GameState.isNavBehind()) {
-      GameState.syncNavToPlay();
-      return false;
-    }
+    if (GameState.isNavBehind()) { GameState.syncNavToPlay(); return false; }
     const myColor = GameState.color();
     if (myColor === "white" && piece.startsWith("b")) return false;
     if (myColor === "black" && piece.startsWith("w")) return false;
     return true;
   }
 
-  /**
-   * Retourne la liste des représentations UCI possibles pour un coup.
-   * Pour le roque, on renvoie les 2 variantes (roi→case cible et roi→tour)
-   * pour être compatible avec les deux conventions.
-   */
   function _possibleUciForms(move) {
     const base = move.from + move.to + (move.promotion || "");
     if (!move.flags) return [base];
-
-    // Roque petit (k) ou grand (q) → ajouter les 2 conventions
     if (move.flags.includes("k")) {
-      // Petit roque : e1g1 (standard) ou e1h1 (chess960)
-      const rank = move.from[1];
-      return [
-        `e${rank}g${rank}`,
-        `e${rank}h${rank}`,
-      ];
+      const r = move.from[1];
+      return [`e${r}g${r}`, `e${r}h${r}`];
     }
     if (move.flags.includes("q")) {
-      // Grand roque : e1c1 (standard) ou e1a1 (chess960)
-      const rank = move.from[1];
-      return [
-        `e${rank}c${rank}`,
-        `e${rank}a${rank}`,
-      ];
+      const r = move.from[1];
+      return [`e${r}c${r}`, `e${r}a${r}`];
     }
     return [base];
   }
 
   function _onDrop(source, target) {
+    _wasSnapback = false;
+    _pendingDrop = false;
+
     const fen = GameState.currentFen();
-    if (!fen) return "snapback";
+    if (!fen) { _wasSnapback = true; return "snapback"; }
 
     _chess.load(fen);
     const move = _chess.move({ from: source, to: target, promotion: "q" });
-    if (!move) return "snapback";   // coup illégal aux échecs
+    if (!move) { _wasSnapback = true; return "snapback"; }
 
     const uciForms = _possibleUciForms(move);
-    const uci      = uciForms[0];  // UCI "canonique" pour l'affichage/envoi
-    const st = GameState.get();
+    const uci = uciForms[0];
+    const st  = GameState.get();
 
-    // DEBUG: tracer les coups spéciaux (roque, prise en passant, promotion)
-    if (move.flags && /[kqep]/.test(move.flags)) {
-      console.log("[BOARD] coup spécial :", {
-        from: move.from, to: move.to, flags: move.flags,
-        san: move.san, piece: move.piece,
-        uci_formes: uciForms,
-        uci_attendu: st.line[st.playIndex]?.move_uci,
-      });
-    }
-
-    // ── Mode correct+correcting : l'utilisateur tente de rejouer après l'erreur ──
+    // ── Mode correct ─────────────────────────────────────────────────────────
     if (st.mode === "correct") {
-      if (st.correctionPhase !== "correcting") {
-        return "snapback";
-      }
-      if (!window.Correct?.handleUserMove) return "snapback";
-      // handleUserMove retourne true si le coup est accepté, false sinon
+      if (st.correctionPhase !== "correcting") { _wasSnapback = true; return "snapback"; }
+      if (!window.Correct?.handleUserMove)     { _wasSnapback = true; return "snapback"; }
       const accepted = Correct.handleUserMove(uci, uciForms, move);
-      if (!accepted) {
-        // Coup refusé : son d'erreur déjà joué par Correct, on snap back
-        return "snapback";
-      }
-      // Coup accepté : sons + state update déjà gérés par Correct
-      const isCapture = move.flags && move.flags.includes("c");
-      if (window.Sounds) Sounds.play(isCapture ? "capture" : "move");
-      _suppressNextSound = true;
-      _userDropFen = _chess.fen();
+      if (!accepted) { _wasSnapback = true; return "snapback"; }
+      // Bon coup accepté par Correct (son joué là-bas)
+      // _onSnapEnd ne sera PAS inhibé : il synchro au nouveau FEN (correct move-added)
       return;
     }
 
-    // ── Mode visualisation : naviguer dans le répertoire ──────────────────
+    // ── Mode visualisation ────────────────────────────────────────────────────
     if (st.mode !== "training") {
-      const currentChildren = (st.navIndex < 0)
+      const children = st.navIndex < 0
         ? (st.repertoire?.children || [])
         : (st.line[st.navIndex]?.children || []);
-
-      const matched = currentChildren.find(c => uciForms.includes(c.move_uci));
+      const matched = children.find(c => uciForms.includes(c.move_uci));
       if (!matched) {
         if (window.Sounds) Sounds.play("error");
-        return "snapback";
+        _wasSnapback = true; return "snapback";
       }
-
       const newPath = st.line.slice(0, st.navIndex + 1).concat([matched]);
-      const isCapture = move.flags && move.flags.includes("c");
-      if (window.Sounds) Sounds.play(isCapture ? "capture" : "move");
+      if (window.Sounds) Sounds.play(move.flags?.includes("c") ? "capture" : "move");
       _suppressNextSound = true;
-      _userDropFen = _chess.fen();
+      _pendingDrop = true;  // inhiber _onSnapEnd, _onStateChange s'en charge
       GameState.setExplorationPath(newPath);
       return;
     }
 
-    // ── Mode entraînement ────────────────────────────────────────────────
-    // Trouver la forme UCI qui correspond au coup attendu (pour éviter le rejet)
+    // ── Mode training ─────────────────────────────────────────────────────────
     const expectedUci = st.line[st.playIndex]?.move_uci;
     const uciToSend   = uciForms.includes(expectedUci) ? expectedUci : uci;
-
-    const isCapture = move.flags && move.flags.includes("c");
-    if (window.Sounds) Sounds.play(isCapture ? "capture" : "move");
+    if (window.Sounds) Sounds.play(move.flags?.includes("c") ? "capture" : "move");
     _suppressNextSound = true;
-    _userDropFen = _chess.fen();  // FEN après notre coup → _onStateChange skip
-
+    _pendingDrop = true;  // inhiber _onSnapEnd jusqu'à la réponse du serveur
     if (_onUserMove) _onUserMove(uciToSend);
   }
 
   function _onSnapEnd() {
-    // Re-synchroniser le board avec l'état après un coup
+    // Si le drop est en cours de traitement async (training, viewing), ne rien faire.
+    // _onStateChange sera appelé avec le bon FEN quand le serveur aura répondu.
+    if (_pendingDrop) { _pendingDrop = false; return; }
+    // Snapback : resync sans animation pour être sûr
+    if (_wasSnapback) { _wasSnapback = false; }
     const fen = GameState.currentFen();
-    if (fen) _board?.position(fen, false);
+    if (fen && _board) _board.position(fen, false);
   }
 
-  // ── Réaction au GameState ────────────────────────────────────────────────
-
-  let _lastDisplayedFen = null;
-  let _suppressNextSound = false;   // mis à true par _onDrop pour éviter le double-son
-  let _userDropFen = null;  // FEN produit par le dernier drop user (pour éviter le flash)
+  // ── Réaction au GameState ─────────────────────────────────────────────────
 
   function _onStateChange(state, reason) {
     const fen = GameState.currentFen();
 
-    // Re-créer le board si l'orientation a changé
+    // Réorientation si couleur du répertoire change
     const newOrientation = state.repertoire?.color || "white";
     if (newOrientation !== _orientation) {
       _orientation = newOrientation;
       _create();
       _lastDisplayedFen = fen;
-      _userDropFen = null;
       return;
     }
 
-    // Si la POSITION des pièces est la même que celle produite par un drop user,
-    // on ne re-rend pas le board (chessboard.js gère via _onSnapEnd).
-    // Mais si on passe à un FEN différent (coup adverse suivant), on rend.
-    const skipBoardUpdate = (_userDropFen !== null)
-      && _samePosition(fen, _userDropFen);
-    if (skipBoardUpdate) {
-      _userDropFen = null;  // consommé
-    }
+    if (!fen || !_board) return;
 
-    // Sinon, juste mettre à jour la position
-    if (fen && _board && !skipBoardUpdate) {
-      _board.position(fen, true);
+    // ── Coup adverse en training (avec délai 500ms dans GameState) ────────────
+    const isOpponentMove = (
+      reason === "training-update"
+      && !state.lineDone
+      && !state.errors.includes(state.playIndex)
+      && state.navIndex >= 0
+      && state.line[state.navIndex]
+      && _lastDisplayedFen !== null
+      && !_samePosition(fen, _lastDisplayedFen)
+    );
 
-      // Son si la position a vraiment changé (et qu'on n'est pas dans un drop user)
-      if (fen !== _lastDisplayedFen && _lastDisplayedFen !== null) {
-        if (!_suppressNextSound && window.Sounds) {
-          const wasCapture = _countPieces(_lastDisplayedFen) > _countPieces(fen);
-          Sounds.play(wasCapture ? "capture" : "move");
-        }
-        _suppressNextSound = false;
+    if (isOpponentMove) {
+      const uci    = state.line[state.navIndex].move_uci;
+      const fromSq = uci.slice(0, 2);
+      const toSq   = uci.slice(2, 4);
+      _animateMove(fromSq, toSq, fen, 200);
+      if (!_suppressNextSound && window.Sounds) {
+        Sounds.play(_countPieces(_lastDisplayedFen) > _countPieces(fen) ? "capture" : "move");
       }
-      _lastDisplayedFen = fen;
-    } else if (skipBoardUpdate) {
-      _lastDisplayedFen = fen;
       _suppressNextSound = false;
+      _lastDisplayedFen  = fen;
+      setTimeout(() => {
+        clearHighlights();
+        if (_showLastMove) _highlight([fromSq, toSq], "highlight-last");
+        _checkAndHighlightCheck(fen);
+      }, 200);
+      return;
     }
+
+    // ── Erreur en training (mauvais coup joué) ────────────────────────────────
+    // La pièce est visuellement à la mauvaise case (le drop l'a déposée).
+    // On resync sans animation pour qu'elle revienne instantanément.
+    const isTrainingError = (
+      reason === "training-update"
+      && state.errors.includes(state.playIndex)
+    );
+    if (isTrainingError) {
+      _board.position(fen, false);
+      _suppressNextSound = false;
+      _lastDisplayedFen  = fen;
+      clearHighlights();   // les highlights erreur sont gérés par training.js
+      _checkAndHighlightCheck(fen);
+      return;
+    }
+
+    // ── Tous les autres cas : position instantanée ────────────────────────────
+    _board.position(fen, false);
+
+    // Son (navigation, correction, etc.) — uniquement si la position a vraiment changé
+    if (!_samePosition(fen, _lastDisplayedFen) && _lastDisplayedFen !== null) {
+      if (!_suppressNextSound && window.Sounds) {
+        Sounds.play(_countPieces(_lastDisplayedFen) > _countPieces(fen) ? "capture" : "move");
+      }
+    }
+    _suppressNextSound = false;
+    _lastDisplayedFen  = fen;
 
     // Highlights
     clearHighlights();
-    if (state.navIndex >= 0 && state.line[state.navIndex]) {
+    if (_showLastMove && state.navIndex >= 0 && state.line[state.navIndex]) {
       const uci = state.line[state.navIndex].move_uci;
       _highlight([uci.slice(0,2), uci.slice(2,4)], "highlight-last");
     }
+    _checkAndHighlightCheck(fen);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  let _showLastMove = false;  // toggle highlight-last (désactivé par défaut)
+
+  function setShowLastMove(v) {
+    _showLastMove = !!v;
+    // Re-render immédiat
+    const st = GameState.get();
+    const fen = GameState.currentFen();
+    if (!fen || !_board) return;
+    clearHighlights();
+    if (_showLastMove && st.navIndex >= 0 && st.line[st.navIndex]) {
+      const uci = st.line[st.navIndex].move_uci;
+      _highlight([uci.slice(0,2), uci.slice(2,4)], "highlight-last");
+    }
+    _checkAndHighlightCheck(fen);
   }
 
   function _countPieces(fen) {
-    if (!fen) return 0;
-    return (fen.split(" ")[0].match(/[a-zA-Z]/g) || []).length;
+    return fen ? (fen.split(" ")[0].match(/[a-zA-Z]/g) || []).length : 0;
   }
 
-  /** Compare la position des pièces (4 premiers champs du FEN, sans compteurs). */
   function _samePosition(a, b) {
     if (!a || !b) return false;
-    const ka = a.split(" ").slice(0, 4).join(" ");
-    const kb = b.split(" ").slice(0, 4).join(" ");
-    return ka === kb;
+    return a.split(" ").slice(0,4).join(" ") === b.split(" ").slice(0,4).join(" ");
   }
 
-  /** Appelé par training.js juste avant l'envoi pour éviter le double son. */
-  function suppressNextSound() {
-    _suppressNextSound = true;
+  function suppressNextSound() { _suppressNextSound = true; }
+
+  function _checkAndHighlightCheck(fen) {
+    if (!fen) return;
+    try {
+      const tmp = new Chess(fen);
+      if (!tmp.in_check()) return;
+      const color = tmp.turn();
+      let kingSq = null;
+      const board = tmp.board();
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const p = board[r][c];
+          if (p && p.type === "k" && p.color === color) {
+            kingSq = String.fromCharCode(97 + c) + (8 - r);
+          }
+        }
+      }
+      if (!kingSq) return;
+      const squareEl = document.querySelector(`#board-container [data-square="${kingSq}"]`);
+      if (!squareEl) return;
+      squareEl.classList.add("highlight-check");
+      _lastHighlight.push({ sq: kingSq, cls: "highlight-check" });
+      const pieceImg = squareEl.querySelector("img");
+      if (pieceImg) {
+        pieceImg.classList.remove("piece-shake");
+        void pieceImg.offsetWidth;
+        pieceImg.classList.add("piece-shake");
+        pieceImg.addEventListener("animationend", () => pieceImg.classList.remove("piece-shake"), { once: true });
+      }
+      setTimeout(() => { if (window.Sounds) Sounds.play("check"); }, 80);
+    } catch(e) {}
   }
 
   // ── Highlights ────────────────────────────────────────────────────────────
 
   function clearHighlights() {
-    _lastHighlight.forEach(({sq, cls}) => {
-      document.querySelector(`#board-container [data-square="${sq}"]`)
-        ?.classList.remove(cls);
+    _lastHighlight.forEach(({ sq, cls }) => {
+      document.querySelector(`#board-container [data-square="${sq}"]`)?.classList.remove(cls);
     });
     _lastHighlight = [];
   }
@@ -321,9 +374,20 @@ const Board = (() => {
     _highlight([uci.slice(0,2), uci.slice(2,4)], "highlight-error");
   }
 
+  function highlightSquare(sq, cls) {
+    if (sq && cls) _highlight([sq], cls);
+  }
+
+  function setPosition(fen) {
+    if (_board && fen) _board.position(fen, false);
+  }
+
   // ── API publique ──────────────────────────────────────────────────────────
   return {
-    init, clearHighlights, highlightHint, highlightError, suppressNextSound,
+    init,
+    clearHighlights, highlightHint, highlightError, highlightSquare, setPosition,
+    suppressNextSound, setShowLastMove,
+    animateMove: _animateMove,
   };
 })();
 

@@ -247,6 +247,9 @@
     $("panel-training")?.classList.toggle("active", mode === "training");
     $("panel-correct")?.classList.toggle("active",  mode === "correct");
 
+    // L'arbre n'est pertinent qu'en visualisation
+    document.body.setAttribute("data-mode", mode);
+
     if (mode === "training") {
       const st = GameState.get();
       if (!st.line.length) {

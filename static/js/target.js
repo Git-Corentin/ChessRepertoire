@@ -199,8 +199,13 @@ const Target = (() => {
         path.setAttribute("opacity", "0.55");
         _hideTooltip();
       });
-      // Clic = naviguer dans le PARENT (segment milieu correspondant)
-      path.addEventListener("click", () => _navigateInto(seg.parentNode));
+      // Clic = jouer les DEUX coups : d'abord celui de l'anneau milieu (parentNode),
+      // puis celui de l'anneau extérieur (seg.node lui-même).
+      path.addEventListener("click", () => {
+        _navigateInto(seg.parentNode);
+        // _navigateInto recompose la ligne autour de navIndex, on enchaîne directement.
+        _navigateInto(seg.node);
+      });
       _svg.appendChild(path);
 
       const span = seg.end - seg.start;

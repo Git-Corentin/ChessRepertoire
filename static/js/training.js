@@ -24,13 +24,15 @@ const Training = (() => {
 
   let _slug = null;
   let _freq = 0.001;
-  let _bias = 1.0;            // weight_exponent envoyé au backend
+  let _bias = 1.0;
+  let _showSolutionAuto = false;   // false = masquer la solution par défaut
   let _opponentTimer = null;
 
   // DOM cache
   let $status, $statusText, $progressBar, $btnHint, $btnNext,
       $btnLock, $btnUnlock, $lockInd, $autoToggle,
-      $btnTrainErrors, $errorBadge;
+      $btnTrainErrors, $errorBadge, $btnShowSolution, $autoSolutionToggle,
+      $showLastMoveToggle;
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
@@ -44,15 +46,47 @@ const Training = (() => {
     $btnUnlock   = document.getElementById("btn-unlock");
     $lockInd     = document.getElementById("lock-indicator");
     $autoToggle  = document.getElementById("auto-chain-toggle");
-    $btnTrainErrors = document.getElementById("btn-train-errors");
-    $errorBadge  = document.getElementById("error-count-badge");
+    $btnTrainErrors       = document.getElementById("btn-train-errors");
+    $errorBadge           = document.getElementById("error-count-badge");
+    $btnShowSolution      = document.getElementById("btn-show-solution");
+    $autoSolutionToggle   = document.getElementById("auto-solution-toggle");
+    $showLastMoveToggle   = document.getElementById("show-last-move-toggle");
 
     $btnNext?.addEventListener("click", () => startNewLine());
     $btnHint?.addEventListener("click", () => requestHint());
     $btnLock?.addEventListener("click", () => lockPosition());
     $btnUnlock?.addEventListener("click", () => unlockPosition());
-    $autoToggle?.addEventListener("change", e => GameState.setAutoChain(e.target.checked));
+    $btnShowSolution?.addEventListener("click", () => _revealSolution());
+    $autoSolutionToggle?.addEventListener("change", e => {
+      _showSolutionAuto = e.target.checked;
+    });
+    $showLastMoveToggle?.addEventListener("change", e => {
+      if (window.Board) Board.setShowLastMove(e.target.checked);
+    });
+    $autoToggle?.addEventListener("change", e => {
+      GameState.setAutoChain(e.target.checked);
+      if (e.target.checked) {
+        const st = GameState.get();
+        if (st.mode === "training" && st.lineDone) {
+          setTimeout(() => startNewLine(), 400);
+        }
+      }
+    });
     $btnTrainErrors?.addEventListener("click", () => startFromErrors());
+
+    // ── Raccourcis clavier ───────────────────────────────────────────────────
+    document.addEventListener("keydown", e => {
+      const st = GameState.get();
+      if (st.mode !== "training") return;
+      // Ignorer si on est dans un input
+      if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+      switch (e.key.toLowerCase()) {
+        case "i": e.preventDefault(); requestHint();    break;
+        case "s": e.preventDefault(); _revealSolution(); break;
+        case "v": e.preventDefault(); lockPosition();   break;
+        case "n": e.preventDefault(); startNewLine();   break;
+      }
+    });
 
     GameState.subscribe(_onStateChange);
   }
@@ -174,7 +208,8 @@ const Training = (() => {
 
     try {
       const data = await _post("/api/training/move/", { move_uci: uci });
-      GameState.applyTrainingResponse(data);
+      // Délai de 500ms avant le coup adverse pour éviter le double flash visuel
+      GameState.applyTrainingResponse(data, 500);
       _afterUpdate(data, uci);
     } catch(e) {
       console.error(e);
@@ -195,9 +230,16 @@ const Training = (() => {
     // Erreur ?
     if (st.errors.includes(idx) && st.expectedMove) {
       if (window.Sounds) Sounds.play("error");
-      _setStatus("error",
-        `Erreur — coup attendu : <strong>${st.expectedMove.san}</strong><br>Jouez ce coup pour continuer`);
-      Board.highlightError(st.expectedMove.uci);
+      if (_showSolutionAuto) {
+        Board.highlightError(st.expectedMove.uci);
+        _setStatus("error",
+          `Erreur — coup attendu : <strong>${st.expectedMove.san}</strong><br>Jouez ce coup pour continuer`);
+        if ($btnShowSolution) $btnShowSolution.style.display = "none";
+      } else {
+        Board.clearHighlights();
+        _setStatus("error", "Erreur ! Réfléchis et réessaie, ou clique sur Voir la solution.");
+        if ($btnShowSolution) $btnShowSolution.style.display = "";
+      }
       return;
     }
 
@@ -307,6 +349,15 @@ const Training = (() => {
   function _csrf() {
     return document.cookie.split(";").map(c => c.trim())
       .find(c => c.startsWith("csrftoken="))?.split("=")?.[1] || "";
+  }
+
+  function _revealSolution() {
+    const st = GameState.get();
+    if (!st.expectedMove) return;
+    _setStatus("error",
+      `Erreur — coup attendu : <strong>${st.expectedMove.san}</strong><br>Jouez ce coup pour continuer`);
+    if ($btnShowSolution) $btnShowSolution.style.display = "none";
+    Board.highlightError(st.expectedMove.uci);
   }
 
   return {

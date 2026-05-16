@@ -38,7 +38,7 @@ const GameState = (() => {
     playIndex:   0,           // (training) prochain coup à jouer
     errors:      [],
     revealed:    [],
-    autoChain:   false,
+    autoChain:   true,
     lock:        null,
     expectedMove: null,       // {uci, san} si révélé
     lineDone:    false,
@@ -74,9 +74,28 @@ const GameState = (() => {
 
   // ── Mode ──────────────────────────────────────────────────────────────────
   function setMode(mode) {
-    if (_state.mode === mode) return;
+    const prevMode = _state.mode;
+    if (prevMode === mode) return;
+
+    // Sauvegarder l'état de correction avant de quitter le mode correct
+    if (prevMode === "correct" && _state.correctGame) {
+      _state._savedCorrectLine     = _state.line.slice();
+      _state._savedCorrectNavIndex = _state.navIndex;
+      _state._savedCorrectPhase    = _state.correctionPhase;
+    }
+
     _state.mode = mode;
-    // Reset nav et état de training quand on change de mode
+
+    // Si on revient sur "correct" avec un état sauvegardé, le restaurer
+    if (mode === "correct" && _state.correctGame && _state._savedCorrectLine) {
+      _state.line             = _state._savedCorrectLine;
+      _state.navIndex         = _state._savedCorrectNavIndex;
+      _state.correctionPhase  = _state._savedCorrectPhase || "browsing";
+      _notify("mode-change");
+      return;
+    }
+
+    // Reset pour tous les autres changements de mode
     _state.navIndex = -1;
     _state.line = [];
     _state.playIndex = 0;
@@ -128,10 +147,18 @@ const GameState = (() => {
   /**
    * Applique une réponse complète de l'API training (start/move/hint).
    * data: { line, current_index, errors, revealed, expected_move, line_done, ... }
+   *
+   * Si la nouvelle ligne contient des coups adverses entre l'ancienne position
+   * et la nouvelle (cas typique : le user vient de jouer, l'adversaire répond),
+   * on les anime avec un délai pour éviter le flash.
+   *
+   * @param {number} opponentDelay - délai en ms avant que le coup adverse soit
+   *                                  affiché (0 = pas de délai, pour start/hint).
    */
-  function applyTrainingResponse(data) {
+  function applyTrainingResponse(data, opponentDelay = 0) {
     if (_state.mode !== "training") return;
 
+    const prevNavIndex = _state.navIndex;
     _state.line         = data.line || [];
     _state.playIndex    = data.current_index ?? 0;
     _state.errors       = data.errors || [];
@@ -139,16 +166,32 @@ const GameState = (() => {
     _state.expectedMove = data.expected_move || null;
     _state.lineDone     = !!data.line_done;
 
-    // Position d'affichage = playIndex - 1 (le board affiche le dernier coup joué)
-    // ou la fin si line_done
-    if (_state.lineDone) {
-      _state.navIndex = _state.line.length - 1;
-    } else {
-      _state.navIndex = _state.playIndex - 1;
-    }
+    const finalNav = _state.lineDone
+      ? _state.line.length - 1
+      : _state.playIndex - 1;
 
-    _notify("training-update");
+    // Cas spécial : si on saute de plusieurs coups (user move + opponent reply),
+    // on s'arrête d'abord au coup user pour laisser l'animation se faire,
+    // puis on enchaîne sur la suite après un délai.
+    const intermediateNav = prevNavIndex + 1;  // juste après le coup user
+
+    if (opponentDelay > 0 && intermediateNav < finalNav && intermediateNav < _state.line.length) {
+      // Étape 1 : afficher juste le coup user
+      _state.navIndex = intermediateNav;
+      _notify("training-update");
+      // Étape 2 : après délai, afficher les coups adverses
+      clearTimeout(_pendingOpponentTimer);
+      _pendingOpponentTimer = setTimeout(() => {
+        _state.navIndex = finalNav;
+        _notify("training-update");
+      }, opponentDelay);
+    } else {
+      _state.navIndex = finalNav;
+      _notify("training-update");
+    }
   }
+
+  let _pendingOpponentTimer = null;
 
   // ── Navigation clavier ────────────────────────────────────────────────────
 
